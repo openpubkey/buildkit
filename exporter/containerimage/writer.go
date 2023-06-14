@@ -14,7 +14,8 @@ import (
 	"github.com/containerd/containerd/images"
 	"github.com/containerd/containerd/labels"
 	"github.com/containerd/containerd/platforms"
-	intoto "github.com/in-toto/in-toto-golang/in_toto"
+	"github.com/in-toto/in-toto-golang/in_toto"
+	"github.com/jonnystoten/openpubkey/sign"
 	"github.com/moby/buildkit/cache"
 	cacheconfig "github.com/moby/buildkit/cache/config"
 	"github.com/moby/buildkit/exporter"
@@ -39,6 +40,7 @@ import (
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/package-url/packageurl-go"
 	"github.com/pkg/errors"
+	"github.com/secure-systems-lab/go-securesystemslib/dsse"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 	"golang.org/x/sync/errgroup"
@@ -248,7 +250,7 @@ func (ic *ImageWriter) Commit(ctx context.Context, inp *exporter.Source, session
 				return nil, err
 			}
 
-			var defaultSubjects []intoto.Subject
+			var defaultSubjects []in_toto.Subject
 			for _, name := range strings.Split(opts.ImageName, ",") {
 				if name == "" {
 					continue
@@ -257,7 +259,7 @@ func (ic *ImageWriter) Commit(ctx context.Context, inp *exporter.Source, session
 				if err != nil {
 					return nil, err
 				}
-				defaultSubjects = append(defaultSubjects, intoto.Subject{
+				defaultSubjects = append(defaultSubjects, in_toto.Subject{
 					Name:   pl,
 					Digest: result.ToDigestMap(desc.Digest),
 				})
@@ -266,8 +268,13 @@ func (ic *ImageWriter) Commit(ctx context.Context, inp *exporter.Source, session
 			if err != nil {
 				return nil, err
 			}
+			envs, err := sign.SignInTotoStatements(ctx, stmts, "https://token.actions.githubusercontent.com")
+			if err != nil {
+				return nil, err
+			}
 
-			desc, err := ic.commitAttestationsManifest(ctx, opts, p, desc.Digest.String(), stmts)
+			imageDigest := desc.Digest.String()
+			desc, err := ic.CommitAttestationsManifest(ctx, opts, p, imageDigest, envs, attestationTypes.DockerAnnotationReferenceTypeDefault)
 			if err != nil {
 				return nil, err
 			}
@@ -482,7 +489,7 @@ func (ic *ImageWriter) commitDistributionManifest(ctx context.Context, opts *Ima
 	}, &configDesc, nil
 }
 
-func (ic *ImageWriter) commitAttestationsManifest(ctx context.Context, opts *ImageCommitOpts, p exptypes.Platform, target string, statements []intoto.Statement) (*ocispecs.Descriptor, error) {
+func (ic *ImageWriter) CommitAttestationsManifest(ctx context.Context, opts *ImageCommitOpts, p exptypes.Platform, target string, envs []dsse.Envelope, refType string) (*ocispecs.Descriptor, error) {
 	var (
 		manifestType = ocispecs.MediaTypeImageManifest
 		configType   = ocispecs.MediaTypeImageConfig
@@ -492,22 +499,31 @@ func (ic *ImageWriter) commitAttestationsManifest(ctx context.Context, opts *Ima
 		configType = images.MediaTypeDockerSchema2Config
 	}
 
-	layers := make([]ocispecs.Descriptor, len(statements))
-	for i, statement := range statements {
-		i, statement := i, statement
+	layers := make([]ocispecs.Descriptor, len(envs))
+	for i, env := range envs {
+		payload, err := env.DecodeB64Payload()
+		if err != nil {
+			return nil, err
+		}
 
-		data, err := json.Marshal(statement)
+		var st in_toto.Statement
+		err = json.Unmarshal(payload, &st)
+		if err != nil {
+			return nil, err
+		}
+
+		data, err := json.Marshal(env)
 		if err != nil {
 			return nil, errors.Wrap(err, "failed to marshal attestation")
 		}
 		digest := digest.FromBytes(data)
 		desc := ocispecs.Descriptor{
-			MediaType: intoto.PayloadType,
+			MediaType: in_toto.PayloadType,
 			Digest:    digest,
 			Size:      int64(len(data)),
 			Annotations: map[string]string{
 				labels.LabelUncompressed:    digest.String(),
-				"in-toto.io/predicate-type": statement.PredicateType,
+				"in-toto.io/predicate-type": st.PredicateType,
 			},
 		}
 
@@ -574,7 +590,7 @@ func (ic *ImageWriter) commitAttestationsManifest(ctx context.Context, opts *Ima
 		Size:      int64(len(mfstJSON)),
 		MediaType: manifestType,
 		Annotations: map[string]string{
-			attestationTypes.DockerAnnotationReferenceType:   attestationTypes.DockerAnnotationReferenceTypeDefault,
+			attestationTypes.DockerAnnotationReferenceType:   refType,
 			attestationTypes.DockerAnnotationReferenceDigest: target,
 		},
 	}, nil
