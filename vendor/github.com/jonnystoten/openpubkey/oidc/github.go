@@ -44,13 +44,9 @@ func (p *GitHubOIDCProvider) Issuer() string {
 	return GithubActionsIssuer
 }
 
-func (p *GitHubOIDCProvider) GetJWT(claims *Claims) (*JWT, error) {
+func (p *GitHubOIDCProvider) GetJWT(claims *Claims) ([]byte, error) {
 	c := DefaultOIDCClient(claims.Audience)
 	jwt, err := c.GetJWT()
-	if err != nil {
-		return nil, err
-	}
-	err = jwt.Parse()
 	if err != nil {
 		return nil, err
 	}
@@ -59,6 +55,10 @@ func (p *GitHubOIDCProvider) GetJWT(claims *Claims) (*JWT, error) {
 
 func (p *GitHubOIDCProvider) GetPublicKey(kid string) (*rsa.PublicKey, error) {
 	return GetOIDCPublicKey(p.Issuer(), kid)
+}
+
+func (p *GitHubOIDCProvider) Verify(jwt []byte) (kid string, err error) {
+	return Verify(jwt, p)
 }
 
 type ActionsOIDCClient struct {
@@ -102,7 +102,7 @@ func (c *ActionsOIDCClient) BuildTokenURL() error {
 }
 
 // retrieve an actions oidc token
-func (c *ActionsOIDCClient) GetJWT() (*JWT, error) {
+func (c *ActionsOIDCClient) GetJWT() ([]byte, error) {
 	request, err := http.NewRequest("GET", c.TokenRequestURL, nil)
 	if err != nil {
 		return nil, err
@@ -126,8 +126,10 @@ func (c *ActionsOIDCClient) GetJWT() (*JWT, error) {
 		return nil, err
 	}
 
-	var jwt JWT
+	var jwt struct {
+		Value string
+	}
 	err = json.Unmarshal(rawBody, &jwt)
 
-	return &jwt, err
+	return []byte(jwt.Value), err
 }

@@ -71,8 +71,8 @@ func (p Proof) Encode() string {
 		bin = append(bin, proof.Z.Bytes()...)
 	}
 
-	encoded := make([]byte, base64.RawURLEncoding.EncodedLen(len(bin)))
-	base64.RawURLEncoding.Encode(encoded, bin)
+	encoded := make([]byte, base64.StdEncoding.EncodedLen(len(bin)))
+	base64.StdEncoding.Encode(encoded, bin)
 
 	return string(encoded)
 }
@@ -80,7 +80,7 @@ func (p Proof) Encode() string {
 func DecodeProof(s string) (*Proof, error) {
 	var proof Proof
 
-	bin, err := base64.RawURLEncoding.DecodeString(s)
+	bin, err := base64.StdEncoding.DecodeString(s)
 	if err != nil {
 		return nil, err
 	}

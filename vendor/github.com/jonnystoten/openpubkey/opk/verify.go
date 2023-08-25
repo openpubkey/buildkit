@@ -3,25 +3,23 @@ package opk
 import (
 	"bytes"
 	"crypto/ecdsa"
-	"crypto/sha256"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"strings"
 
 	"github.com/jonnystoten/openpubkey/gq"
+	"github.com/jonnystoten/openpubkey/internal/utils"
 	"github.com/jonnystoten/openpubkey/oidc"
 )
 
-func VerifyOPK(plain *[]byte, jwt *OpenPubKey, provider oidc.OIDCProvider, ids *[]Identity) error {
-	payload, opkSignature := jwt.Payload, jwt.Signatures[1]
+func VerifyOPK(jws *JWS, provider oidc.OIDCProvider) error {
+	payload, opkSignature := jws.Payload, jws.Signatures[1]
 
 	cic, err := VerifyOPKSignature(opkSignature, payload)
 	if err != nil {
 		return fmt.Errorf("failed to verify opk signature: %w", err)
 	}
-	fmt.Println("Verified OPK signature", payload)
-	err = VerifyOIDCSignature(jwt.Signatures[0], payload, provider, ids)
+	fmt.Println("Verified OPK signature")
+	err = VerifyOIDCSignature(jws.Signatures[0], payload, provider)
 	if err != nil {
 		return fmt.Errorf("failed to verify oidc signature: %w", err)
 	}
@@ -29,16 +27,12 @@ func VerifyOPK(plain *[]byte, jwt *OpenPubKey, provider oidc.OIDCProvider, ids *
 	if err != nil {
 		return fmt.Errorf("failed to verify nonce: %w", err)
 	}
-	h := sha256.Sum256(*plain)
-	if !bytes.Equal(h[:], cic.Digest) {
-		return fmt.Errorf("digest doesn't match")
-	}
 	fmt.Println("Verified signed payload matches")
 	return nil
 }
 
-func VerifyOPKSignature(sigWrapper OPKSignature, payload string) (*CIC, error) {
-	protectedJSON, err := base64.RawURLEncoding.DecodeString(sigWrapper.Protected)
+func VerifyOPKSignature(sigWrapper JWSignature, payload []byte) (*CIC, error) {
+	protectedJSON, err := utils.Base64Decode(sigWrapper.Protected)
 	if err != nil {
 		return nil, fmt.Errorf("failed to base64 decode protected: %w", err)
 	}
@@ -59,7 +53,7 @@ func VerifyOPKSignature(sigWrapper OPKSignature, payload string) (*CIC, error) {
 		return nil, fmt.Errorf("failed to decode our public key: %w", err)
 	}
 
-	sig, err := base64.RawURLEncoding.DecodeString(sigWrapper.Signature)
+	sig, err := utils.Base64Decode(sigWrapper.Signature)
 	if err != nil {
 		return nil, fmt.Errorf("failed to base64 decode our signature: %w", err)
 	}
@@ -69,9 +63,9 @@ func VerifyOPKSignature(sigWrapper OPKSignature, payload string) (*CIC, error) {
 		return nil, fmt.Errorf("failed to LoadECDSAVerifier: %w", err)
 	}
 
-	//prot := []byte(sigWrapper.Protected)
-	msg := append([]byte(payload), protectedJSON...)
-	err = verifier.Verify(sig, msg)
+	signingInput := bytes.Join([][]byte{sigWrapper.Protected, payload}, []byte("."))
+
+	err = verifier.Verify(sig, signingInput)
 	if err != nil {
 		return nil, fmt.Errorf("failed to verify our signature: %w", err)
 	}
@@ -86,8 +80,8 @@ type Identity struct {
 	Issuer  string `json:"issuer"`
 }
 
-func VerifyOIDCSignature(sigWrapper OPKSignature, payloadStr string, provider oidc.OIDCProvider, ids *[]Identity) error {
-	protectedJSON, err := base64.RawURLEncoding.DecodeString(sigWrapper.Protected)
+func VerifyOIDCSignature(sigWrapper JWSignature, payloadBytes []byte, provider oidc.OIDCProvider) error {
+	protectedJSON, err := utils.Base64Decode(sigWrapper.Protected)
 	if err != nil {
 		return fmt.Errorf("failed to base64 decode protected: %w", err)
 	}
@@ -103,7 +97,7 @@ func VerifyOIDCSignature(sigWrapper OPKSignature, payloadStr string, provider oi
 		return fmt.Errorf("expected RS256 alg")
 	}
 	//log.Debugln("Got alg %s\n", protected["alg"])
-	payloadJSON, err := base64.RawURLEncoding.DecodeString(strings.Split(payloadStr, ".")[1])
+	payloadJSON, err := utils.Base64Decode(payloadBytes)
 	if err != nil {
 		return fmt.Errorf("failed to base64 decode payload: %w", err)
 	}
@@ -126,41 +120,30 @@ func VerifyOIDCSignature(sigWrapper OPKSignature, payloadStr string, provider oi
 		return fmt.Errorf("failed to get public key: %w", err)
 	}
 
-	proof, err := gq.DecodeProof(sigWrapper.Signature)
+	proof, err := gq.DecodeProof(string(sigWrapper.Signature))
 	if err != nil {
 		return fmt.Errorf("failed to decode GQ proof: %w", err)
 	}
 
-	//log.Debugln("Hashing input: ", sigWrapper.Protected, ".", strings.Split(payloadStr, ".")[1])
-	signingInput := fmt.Sprint(strings.Split(payloadStr, ".")[0], ".", strings.Split(payloadStr, ".")[1])
+	signingInput := bytes.Join([][]byte{sigWrapper.Protected, payloadBytes}, []byte("."))
 
 	validProof := proof.Validate()
 	if !validProof {
 		return fmt.Errorf("invalid GQ proof")
 	}
 
-	verified := proof.Verify([]byte(signingInput), pubKey)
+	verified := proof.Verify(signingInput, pubKey)
 	if !verified {
 		return fmt.Errorf("failed to verify GQ proof")
 	}
 
 	fmt.Println("Verified OIDC payload was signed by", issuer)
 
-	subject := payload["sub"].(string)
-	if len(*ids) > 0 {
-		for _, id := range *ids {
-			if id.Issuer == issuer && id.Subject == subject {
-				return nil
-			}
-		}
-		return fmt.Errorf("none of the expected identities matched what was in the ID token, got %s from %s", subject, issuer)
-	}
-
 	return nil
 }
 
-func verifyNonce(cic *CIC, payloadStr string) error {
-	payloadJSON, err := base64.RawURLEncoding.DecodeString(strings.Split(payloadStr, ".")[1])
+func verifyNonce(cic *CIC, payloadBytes []byte) error {
+	payloadJSON, err := utils.Base64Decode(payloadBytes)
 	if err != nil {
 		return fmt.Errorf("failed to base64 decode payload: %w", err)
 	}

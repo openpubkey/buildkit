@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"time"
 
-	"github.com/golang-jwt/jwt"
-	"github.com/lestrrat-go/jwx/jwk"
+	"github.com/lestrrat-go/jwx/v2/jwk"
+	"github.com/lestrrat-go/jwx/v2/jws"
+	"github.com/lestrrat-go/jwx/v2/jwt"
 )
 
 type GetOIDCToken func(audience string) (*JWT, error)
@@ -20,7 +22,8 @@ type Claims struct {
 
 type OIDCProvider interface {
 	Issuer() string
-	GetJWT(*Claims) (*JWT, error)
+	GetJWT(*Claims) ([]byte, error)
+	Verify(jwt []byte) (kid string, err error)
 	GetPublicKey(kid string) (*rsa.PublicKey, error)
 }
 
@@ -31,45 +34,41 @@ var (
 	}
 )
 
-type JWT struct {
-	Count       int
-	Value       string
-	ParsedToken *jwt.Token
-}
+type JWT string
 
 type OIDCDiscoveryResponse struct {
 	JWKS_URI string `json:"jwks_uri"`
 }
 
-func (j *JWT) Parse() error {
-	var jwtToken *jwt.Token
-	jwt.Parse(j.Value, func(token *jwt.Token) (interface{}, error) {
-		// Don't forget to validate the alg is what you expect:
-		if _, ok := token.Method.(*jwt.SigningMethodRSA); !ok {
-			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
-		}
-		jwtToken = token
-		// we don't need a real check here
-		return []byte{}, nil
-	})
-	j.ParsedToken = jwtToken
-	return nil
-}
-
-func (j *JWT) PrettyPrintClaims() string {
-	if claims, ok := j.ParsedToken.Claims.(jwt.MapClaims); ok {
-		jsonClaims, err := json.MarshalIndent(claims, "", "  ")
-		if err != nil {
-			fmt.Println(fmt.Errorf("%w", err))
-		}
-		return string(jsonClaims)
+func Verify(jwtBytes []byte, provider OIDCProvider) (kid string, err error) {
+	unsafeToken, err := jwt.ParseInsecure(jwtBytes)
+	if err != nil {
+		return "", fmt.Errorf("could not parse jwt: %w", err)
 	}
-	return ""
+	if unsafeToken.Issuer() != provider.Issuer() {
+		return "", fmt.Errorf("bad issuer")
+	}
+
+	jwks, err := GetJWKSFromDiscovery(provider.Issuer())
+	if err != nil {
+		return "", fmt.Errorf("could not get jwks: %w", err)
+	}
+
+	_, err = jwt.Parse(jwtBytes, jwt.WithKeySet(jwks), jwt.WithAcceptableSkew(1*time.Minute))
+	if err != nil {
+		return "", fmt.Errorf("could not verify jwt with jwks: %w", err)
+	}
+
+	parsedJWS, err := jws.Parse(jwtBytes)
+	if err != nil {
+		panic(err)
+	}
+
+	kid = parsedJWS.Signatures()[0].ProtectedHeaders().KeyID()
+	return kid, nil
 }
 
-func GetOIDCPublicKey(issuerUrl string, kid string) (*rsa.PublicKey, error) {
-	//fmt.Println("Fetching OIDC discovery URL: %s", issueUrl)
-
+func GetJWKSFromDiscovery(issuerUrl string) (jwk.Set, error) {
 	discoveryUrl, err := url.JoinPath(issuerUrl, ".well-known/openid-configuration")
 	if err != nil {
 		return nil, fmt.Errorf("failed to construct OIDC discovery URL: %w", err)
@@ -97,6 +96,15 @@ func GetOIDCPublicKey(issuerUrl string, kid string) (*rsa.PublicKey, error) {
 	//log.Debugln("Fetching JWKS URL: %w", jwksURI)
 
 	jwks, err := jwk.Fetch(context.TODO(), jwksURI)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch to JWKS: %w", err)
+	}
+
+	return jwks, nil
+}
+
+func GetOIDCPublicKey(issuerUrl string, kid string) (*rsa.PublicKey, error) {
+	jwks, err := GetJWKSFromDiscovery(issuerUrl)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch to JWKS: %w", err)
 	}

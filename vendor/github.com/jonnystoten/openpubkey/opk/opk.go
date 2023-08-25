@@ -1,6 +1,8 @@
 package opk
 
 import (
+	"bytes"
+	"context"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/rand"
@@ -8,36 +10,36 @@ import (
 	"crypto/sha256"
 	"crypto/sha512"
 	"crypto/x509"
-	"encoding/base64"
 	"encoding/hex"
-	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"fmt"
-	"time"
 
+	"github.com/jonnystoten/openpubkey/internal/utils"
+	"github.com/jonnystoten/openpubkey/types"
+	"github.com/lestrrat-go/jwx/v2/jws"
 	"golang.org/x/crypto/sha3"
-
-	"github.com/jonnystoten/openpubkey/oidc"
 )
 
-type OpenPubKey struct {
-	Payload    string         `json:"payload"`
-	Signatures []OPKSignature `json:"signatures"`
+type JWS struct {
+	Payload    types.Base64Encoded `json:"payload"`
+	Signatures []JWSignature       `json:"signatures"`
 }
 
-type OPKSignature struct {
-	Protected string `json:"protected"`
-	Signature string `json:"signature"`
+type JWSignature struct {
+	Protected types.Base64Encoded `json:"protected"`
+	Signature types.Base64Encoded `json:"signature"`
 }
 
 type CIC struct {
 	Algorithm   string `json:"alg"`
 	PublicKey   []byte `json:"pub"`
 	RandomNoise []byte `json:"rz"`
-	Digest      []byte `json:"digest"`
 	Signature   []byte `json:"sig"`
-	Timestamp   []byte `json:"timestamp"`
+}
+
+type Signer interface {
+	Sign(ctx context.Context, data []byte) ([]byte, error)
 }
 
 func NewKeyPair() (*rsa.PrivateKey, error) {
@@ -102,29 +104,18 @@ func SHA256(things ...[]byte) []byte {
 	return sha.Sum(nil)
 }
 
-func NewCIC(alg string, pub, noise []byte, digest []byte, sig []byte) *CIC {
+func NewCIC(alg string, pub, noise, sig []byte) *CIC {
 	return &CIC{
 		Algorithm:   alg,
 		PublicKey:   pub,
 		RandomNoise: noise,
 		Signature:   sig,
-		Digest:      digest,
-		Timestamp:   []byte(time.Now().Format(time.RFC3339))}
+	}
 }
 
 func (c *CIC) Hash() string {
-	sha := SHA3([]byte(c.Algorithm), c.PublicKey, c.RandomNoise, c.Signature, c.Digest, c.Timestamp)
+	sha := SHA3([]byte(c.Algorithm), c.PublicKey, c.RandomNoise, c.Signature)
 	return hex.EncodeToString(sha)
-}
-
-type ECDSASigner struct {
-	priv *ecdsa.PrivateKey
-}
-
-func NewSignerVerifier(priv *ecdsa.PrivateKey) (*ECDSASigner, error) {
-	return &ECDSASigner{
-		priv: priv,
-	}, nil
 }
 
 type ECDSAVerifier struct {
@@ -150,34 +141,30 @@ func (e ECDSAVerifier) Verify(signature, message []byte) error {
 	return nil
 }
 
-func (e ECDSASigner) SignOPK(payload string, opkHeader []byte) ([]byte, error) {
-	digest := SHA256([]byte(payload), opkHeader)
-	return ecdsa.SignASN1(rand.Reader, e.priv, digest)
-}
-
-func (e ECDSASigner) Sign(payload []byte) ([]byte, error) {
-	return ecdsa.SignASN1(rand.Reader, e.priv, payload)
-}
-
-func NewOpenPubKey(jwt *oidc.JWT, sv ECDSASigner, cic *CIC, gqProof string) *OpenPubKey {
-	header, _ := json.Marshal(jwt.ParsedToken.Header)
-	opkHeader, _ := json.Marshal(cic)
-	payload := jwt.ParsedToken.Raw
-	opkSig, err := sv.SignOPK(payload, opkHeader)
+func NewOpenPubKey(jwtBytes []byte, sv Signer, cic *CIC, gqProof string) *JWS {
+	var header, payload types.Base64Encoded
+	header, payload, _, err := jws.SplitCompact(jwtBytes)
 	if err != nil {
 		panic(err)
 	}
-	return &OpenPubKey{
-		Payload: payload,
-		Signatures: []OPKSignature{
-			{
+	opkHeaderJSON, _ := utils.JSONMarshal(cic)
+	opkHeader := utils.Base64Encode(opkHeaderJSON)
+	signingPayload := bytes.Join([][]byte{opkHeader, payload}, []byte("."))
+	opkSig, err := sv.Sign(context.TODO(), signingPayload)
 
-				Protected: base64.RawURLEncoding.EncodeToString(header),
-				Signature: gqProof,
+	if err != nil {
+		panic(err)
+	}
+	return &JWS{
+		Payload: payload,
+		Signatures: []JWSignature{
+			{
+				Protected: header,
+				Signature: []byte(gqProof),
 			},
 			{
-				Protected: base64.RawURLEncoding.EncodeToString(opkHeader),
-				Signature: base64.RawURLEncoding.EncodeToString(opkSig),
+				Protected: opkHeader,
+				Signature: utils.Base64Encode(opkSig),
 			},
 		},
 	}
