@@ -14,13 +14,13 @@ import (
 	"github.com/containerd/containerd/images"
 	"github.com/containerd/containerd/labels"
 	"github.com/containerd/containerd/platforms"
-	"github.com/in-toto/in-toto-golang/in_toto"
-	"github.com/jonnystoten/openpubkey/sign"
+	intoto "github.com/in-toto/in-toto-golang/in_toto"
 	"github.com/moby/buildkit/cache"
 	cacheconfig "github.com/moby/buildkit/cache/config"
 	"github.com/moby/buildkit/exporter"
 	"github.com/moby/buildkit/exporter/attestation"
 	"github.com/moby/buildkit/exporter/containerimage/exptypes"
+	"github.com/moby/buildkit/exporter/sign"
 	"github.com/moby/buildkit/exporter/util/epoch"
 	"github.com/moby/buildkit/session"
 	"github.com/moby/buildkit/snapshot"
@@ -40,7 +40,6 @@ import (
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/package-url/packageurl-go"
 	"github.com/pkg/errors"
-	"github.com/secure-systems-lab/go-securesystemslib/dsse"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 	"golang.org/x/sync/errgroup"
@@ -250,7 +249,7 @@ func (ic *ImageWriter) Commit(ctx context.Context, inp *exporter.Source, session
 				return nil, err
 			}
 
-			var defaultSubjects []in_toto.Subject
+			var defaultSubjects []intoto.Subject
 			for _, name := range strings.Split(opts.ImageName, ",") {
 				if name == "" {
 					continue
@@ -259,7 +258,7 @@ func (ic *ImageWriter) Commit(ctx context.Context, inp *exporter.Source, session
 				if err != nil {
 					return nil, err
 				}
-				defaultSubjects = append(defaultSubjects, in_toto.Subject{
+				defaultSubjects = append(defaultSubjects, intoto.Subject{
 					Name:   pl,
 					Digest: result.ToDigestMap(desc.Digest),
 				})
@@ -268,13 +267,9 @@ func (ic *ImageWriter) Commit(ctx context.Context, inp *exporter.Source, session
 			if err != nil {
 				return nil, err
 			}
-			envs, err := sign.SignInTotoStatements(ctx, stmts, "https://token.actions.githubusercontent.com")
-			if err != nil {
-				return nil, err
-			}
 
 			imageDigest := desc.Digest.String()
-			desc, err := ic.CommitAttestationsManifest(ctx, opts, p, imageDigest, envs, attestationTypes.DockerAnnotationReferenceTypeDefault)
+			desc, err := ic.commitAttestationsManifest(ctx, opts, p, imageDigest, stmts, attestationTypes.DockerAnnotationReferenceTypeDefault)
 			if err != nil {
 				return nil, err
 			}
@@ -489,7 +484,7 @@ func (ic *ImageWriter) commitDistributionManifest(ctx context.Context, opts *Ima
 	}, &configDesc, nil
 }
 
-func (ic *ImageWriter) CommitAttestationsManifest(ctx context.Context, opts *ImageCommitOpts, p exptypes.Platform, target string, envs []dsse.Envelope, refType string) (*ocispecs.Descriptor, error) {
+func (ic *ImageWriter) commitAttestationsManifest(ctx context.Context, opts *ImageCommitOpts, p exptypes.Platform, target string, statements []intoto.Statement, refType string) (*ocispecs.Descriptor, error) {
 	var (
 		manifestType = ocispecs.MediaTypeImageManifest
 		configType   = ocispecs.MediaTypeImageConfig
@@ -499,31 +494,24 @@ func (ic *ImageWriter) CommitAttestationsManifest(ctx context.Context, opts *Ima
 		configType = images.MediaTypeDockerSchema2Config
 	}
 
-	layers := make([]ocispecs.Descriptor, len(envs))
-	for i, env := range envs {
-		payload, err := env.DecodeB64Payload()
+	layers := make([]ocispecs.Descriptor, len(statements))
+	for i, statement := range statements {
+		env, err := sign.SignInTotoStatement(ctx, statement, sign.GithubActionsOIDC)
 		if err != nil {
-			return nil, err
+			return nil, errors.Wrap(err, "failed to sign attestation")
 		}
-
-		var st in_toto.Statement
-		err = json.Unmarshal(payload, &st)
-		if err != nil {
-			return nil, err
-		}
-
 		data, err := json.Marshal(env)
 		if err != nil {
 			return nil, errors.Wrap(err, "failed to marshal attestation")
 		}
 		digest := digest.FromBytes(data)
 		desc := ocispecs.Descriptor{
-			MediaType: in_toto.PayloadType,
+			MediaType: intoto.PayloadType, // TODO: should we be using a media type for DSSE?
 			Digest:    digest,
 			Size:      int64(len(data)),
 			Annotations: map[string]string{
 				labels.LabelUncompressed:    digest.String(),
-				"in-toto.io/predicate-type": st.PredicateType,
+				"in-toto.io/predicate-type": statement.PredicateType,
 			},
 		}
 
