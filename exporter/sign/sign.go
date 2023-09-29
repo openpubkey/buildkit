@@ -2,9 +2,6 @@ package sign
 
 import (
 	"context"
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
 	"encoding/json"
 	"fmt"
 
@@ -31,17 +28,7 @@ func SignInTotoStatement(ctx context.Context, stmt intoto.Statement, oidcProvide
 		return nil, fmt.Errorf("unkown oidc provider %v", oidcProvider)
 	}
 
-	privKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		return nil, fmt.Errorf("generating private key: %w", err)
-	}
-
-	ecSigner, err := NewECDSASigner(privKey)
-	if err != nil {
-		return nil, err
-	}
-	opkSigner := NewOPKSigner(ecSigner, provider)
-	s, err := dsse.NewEnvelopeSigner(opkSigner)
+	s, err := dsse.NewEnvelopeSigner(NewOPKSigner(provider))
 	if err != nil {
 		return nil, fmt.Errorf("error creating dsse signer: %w", err)
 	}

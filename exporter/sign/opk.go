@@ -3,28 +3,26 @@ package sign
 import (
 	"context"
 	"crypto"
-	"encoding/base64"
+	"crypto/sha256"
+	"encoding/hex"
 
 	"github.com/openpubkey/openpubkey/parties"
 	"github.com/openpubkey/openpubkey/pktoken"
 )
 
 type OPKSigner struct {
-	inner    *ECDSASigner
 	provider parties.OpenIdProvider
 }
 
-func NewOPKSigner(inner *ECDSASigner, provider parties.OpenIdProvider) *OPKSigner {
-	return &OPKSigner{inner: inner, provider: provider}
+func NewOPKSigner(provider parties.OpenIdProvider) *OPKSigner {
+	return &OPKSigner{provider: provider}
 }
 
 func (s *OPKSigner) Sign(ctx context.Context, data []byte) ([]byte, error) {
-	sig, err := s.inner.Sign(ctx, data)
-	if err != nil {
-		return nil, err
-	}
+	hash := s256(data)
+	hashHex := hex.EncodeToString(hash)
 
-	tokSigner, err := pktoken.LoadSigner("", nil, s.inner.priv, "ES256", true, map[string]any{"sig": base64.StdEncoding.EncodeToString(sig)})
+	tokSigner, err := pktoken.NewSigner("", "ES256", true, map[string]any{"att": hashHex})
 	if err != nil {
 		return nil, err
 	}
@@ -45,9 +43,13 @@ func (sv *OPKSigner) Verify(ctx context.Context, data, sig []byte) error {
 }
 
 func (s *OPKSigner) Public() crypto.PublicKey {
-	return s.inner.Public()
+	return nil
 }
 
 func (s *OPKSigner) KeyID() (string, error) {
 	return "OPK", nil
+}
+func s256(data []byte) []byte {
+	h := sha256.Sum256(data)
+	return h[:]
 }
