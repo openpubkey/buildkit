@@ -1058,6 +1058,8 @@ github.com/opencontainers/selinux v1.11.0 h1:+5Zbo97w3Lbmb3PeqQtpmTkMwsW5nRI3YaL
 github.com/opencontainers/selinux v1.11.0/go.mod h1:E5dMC3VPuVvVHDYmi78qvhJp8+M586T4DlDRYpFkyec=
 github.com/openpubkey/openpubkey v0.0.0-20230928095118-49ad9b00c5af h1:7r9cWebneBfpw7T5lSRAP/ozDifsDFu1AIWk5AuFdeo=
 github.com/openpubkey/openpubkey v0.0.0-20230928095118-49ad9b00c5af/go.mod h1:dESBdrrmYkkf9gVvcntnZMyRAGSqey/6OUZorzSoIfc=
+github.com/openpubkey/signed-attestation v0.0.0-20230929134341-bbde09d08cf7 h1:PTDr5MYZpqVdRAfM3JsNzjf6uzzZK88VccR5gjXiLYE=
+github.com/openpubkey/signed-attestation v0.0.0-20230929134341-bbde09d08cf7/go.mod h1:McdSQdyXXikFFpcNC7kv2oWlH8NDS5MDUNdpWdciaA8=
 github.com/opentracing-contrib/go-stdlib v1.0.0/go.mod h1:qtI1ogk+2JhVPIXVc6q+NHziSmy2W5GbdQZFUHADCBU=
 github.com/opentracing/opentracing-go v1.1.0/go.mod h1:UkNAQd3GIcIGf0SeVgPpRdFStlNbqXla1AfSYxPUl2o=
 github.com/opentracing/opentracing-go v1.2.0/go.mod h1:GxEUsuufX4nBwe+T+Wl9TAgYrxe9dPLANfrWvHYVTgc=

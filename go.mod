@@ -1,6 +1,6 @@
 module github.com/moby/buildkit
 
-go 1.21
+go 1.21.1
 
 require (
 	github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.1.0
@@ -94,11 +94,7 @@ require (
 	kernel.org/pub/linux/libs/security/libcap/cap v1.2.67
 )
 
-require (
-	github.com/lestrrat-go/jwx/v2 v2.0.12
-	github.com/openpubkey/openpubkey v0.0.0-20230928095118-49ad9b00c5af
-	github.com/secure-systems-lab/go-securesystemslib v0.7.0
-)
+require github.com/openpubkey/signed-attestation v0.0.0-20230929134341-bbde09d08cf7
 
 require (
 	github.com/AdaLogics/go-fuzz-headers v0.0.0-20230106234847-43070de90fa1 // indirect
@@ -156,18 +152,21 @@ require (
 	github.com/lestrrat-go/httpcc v1.0.1 // indirect
 	github.com/lestrrat-go/httprc v1.0.4 // indirect
 	github.com/lestrrat-go/iter v1.0.2 // indirect
+	github.com/lestrrat-go/jwx/v2 v2.0.12 // indirect
 	github.com/lestrrat-go/option v1.0.1 // indirect
 	github.com/matttproud/golang_protobuf_extensions v1.0.4 // indirect
 	github.com/moby/sys/mount v0.3.3 // indirect
 	github.com/moby/sys/sequential v0.5.0 // indirect
 	github.com/muhlemmer/gu v0.3.1 // indirect
 	github.com/onsi/gomega v1.19.0 // indirect
+	github.com/openpubkey/openpubkey v0.0.0-20230928095118-49ad9b00c5af // indirect
 	github.com/pkg/browser v0.0.0-20210911075715-681adbf594b8 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/prometheus/client_golang v1.14.0 // indirect
 	github.com/prometheus/client_model v0.3.0 // indirect
 	github.com/prometheus/common v0.42.0 // indirect
 	github.com/russross/blackfriday/v2 v2.1.0 // indirect
+	github.com/secure-systems-lab/go-securesystemslib v0.7.0 // indirect
 	github.com/segmentio/asm v1.2.0 // indirect
 	github.com/shibumi/go-pathspec v1.3.0 // indirect
 	github.com/vbatts/tar-split v0.11.3 // indirect

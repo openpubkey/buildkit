@@ -20,7 +20,6 @@ import (
 	"github.com/moby/buildkit/exporter"
 	"github.com/moby/buildkit/exporter/attestation"
 	"github.com/moby/buildkit/exporter/containerimage/exptypes"
-	"github.com/moby/buildkit/exporter/sign"
 	"github.com/moby/buildkit/exporter/util/epoch"
 	"github.com/moby/buildkit/session"
 	"github.com/moby/buildkit/snapshot"
@@ -38,6 +37,7 @@ import (
 	digest "github.com/opencontainers/go-digest"
 	specs "github.com/opencontainers/image-spec/specs-go"
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
+	signedattestation "github.com/openpubkey/signed-attestation"
 	"github.com/package-url/packageurl-go"
 	"github.com/pkg/errors"
 	"go.opentelemetry.io/otel/attribute"
@@ -496,7 +496,7 @@ func (ic *ImageWriter) commitAttestationsManifest(ctx context.Context, opts *Ima
 
 	layers := make([]ocispecs.Descriptor, len(statements))
 	for i, statement := range statements {
-		env, err := sign.SignInTotoStatement(ctx, statement, sign.GithubActionsOIDC)
+		env, err := signedattestation.SignInTotoStatement(ctx, statement, signedattestation.GithubActionsOIDC)
 		if err != nil {
 			return nil, errors.Wrap(err, "failed to sign attestation")
 		}
