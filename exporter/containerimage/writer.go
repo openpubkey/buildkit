@@ -15,6 +15,7 @@ import (
 	"github.com/containerd/containerd/labels"
 	"github.com/containerd/containerd/platforms"
 	intoto "github.com/in-toto/in-toto-golang/in_toto"
+	v02 "github.com/in-toto/in-toto-golang/in_toto/slsa_provenance/v0.2"
 	"github.com/moby/buildkit/cache"
 	cacheconfig "github.com/moby/buildkit/cache/config"
 	"github.com/moby/buildkit/exporter"
@@ -496,6 +497,10 @@ func (ic *ImageWriter) commitAttestationsManifest(ctx context.Context, opts *Ima
 
 	layers := make([]ocispecs.Descriptor, len(statements))
 	for i, statement := range statements {
+		mediaType, err := dsseMediaType(statement.PredicateType)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to get DSSE media type")
+		}
 		env, err := signedattestation.SignInTotoStatement(ctx, statement, signedattestation.GithubActionsOIDC)
 		if err != nil {
 			return nil, errors.Wrap(err, "failed to sign attestation")
@@ -506,7 +511,7 @@ func (ic *ImageWriter) commitAttestationsManifest(ctx context.Context, opts *Ima
 		}
 		digest := digest.FromBytes(data)
 		desc := ocispecs.Descriptor{
-			MediaType: intoto.PayloadType, // TODO: should we be using a media type for DSSE?
+			MediaType: mediaType,
 			Digest:    digest,
 			Size:      int64(len(data)),
 			Annotations: map[string]string{
@@ -594,6 +599,20 @@ func (ic *ImageWriter) Snapshotter() snapshot.Snapshotter {
 
 func (ic *ImageWriter) Applier() diff.Applier {
 	return ic.opt.Applier
+}
+
+func dsseMediaType(predicateType string) (string, error) {
+	var predicateName string
+	switch predicateType {
+	case v02.PredicateSLSAProvenance:
+		predicateName = "provenance"
+	case intoto.PredicateSPDX:
+		predicateName = "spdx"
+	default:
+		return "", fmt.Errorf("unknown predicate type %q", predicateType)
+	}
+
+	return fmt.Sprintf("application/vnd.in-toto.%s+dsse", predicateName), nil
 }
 
 func defaultImageConfig() ([]byte, error) {
