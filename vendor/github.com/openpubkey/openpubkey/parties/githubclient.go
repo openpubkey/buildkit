@@ -1,9 +1,8 @@
 package parties
 
 import (
-	"bytes"
 	"context"
-	"crypto/ecdsa"
+	"crypto"
 	"crypto/rsa"
 	"encoding/json"
 	"fmt"
@@ -150,12 +149,7 @@ func (g *GithubOp) RequestTokens(cicHash string) ([]byte, error) {
 	return []byte(jwt.Value), err
 }
 
-func (g *GithubOp) VerifyPKToken(pktJSON []byte, cosPk *ecdsa.PublicKey) (map[string]any, error) {
-	pkt, err := pktoken.FromJSON(pktJSON)
-	if err != nil {
-		return nil, fmt.Errorf("error parsing PK Token: %w", err)
-	}
-
+func (g *GithubOp) VerifyPKToken(pkt *pktoken.PKToken, cosPk crypto.PublicKey) (map[string]any, error) {
 	if !pkt.OpSigGQ {
 		return nil, fmt.Errorf("non-GQ signatures not supported for github")
 	}
@@ -178,16 +172,16 @@ func (g *GithubOp) VerifyPKToken(pktJSON []byte, cosPk *ecdsa.PublicKey) (map[st
 	rsaPubKey := pubKey.(*rsa.PublicKey)
 
 	sv := gq.NewSignerVerifier(rsaPubKey, gqSecurityParameter)
-	signingPayload, signature, err := util.SplitJWT(idt)
-	if err != nil {
-		return nil, fmt.Errorf("failed to split/decode JWT: %w", err)
-	}
-	ok := sv.Verify(signature, signingPayload, signingPayload)
+	ok := sv.VerifyJWT(idt)
 	if !ok {
 		return nil, fmt.Errorf("error verifying OP GQ signature on PK Token (ID Token invalid)")
 	}
 
-	payloadB64 := bytes.Split(signingPayload, []byte{'.'})[1]
+	_, payloadB64, _, err := jws.SplitCompact(idt)
+	if err != nil {
+		return nil, err
+	}
+
 	payloadJSON, err := util.Base64DecodeForJWT(payloadB64)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decode payload")
@@ -220,8 +214,6 @@ func (g *GithubOp) VerifyPKToken(pktJSON []byte, cosPk *ecdsa.PublicKey) (map[st
 			return nil, fmt.Errorf("error verify cosigner signature on PK Token: %w", err)
 		}
 	}
-
-	fmt.Println("All tests have passed PK Token is valid")
 
 	cicPH := make(map[string]any)
 	err = json.Unmarshal(cicphJSON, &cicPH)

@@ -1,9 +1,8 @@
 package parties
 
 import (
-	"bytes"
 	"context"
-	"crypto/ecdsa"
+	"crypto"
 	"crypto/rsa"
 	"encoding/json"
 	"fmt"
@@ -61,7 +60,7 @@ func (g *GoogleOp) RequestTokens(cicHash string) ([]byte, error) {
 		g.Issuer, g.ClientID, g.ClientSecret, g.RedirectURI,
 		g.Scopes, options...)
 	if err != nil {
-		return nil, fmt.Errorf("error creating provider %w", err)
+		return nil, fmt.Errorf("error creating provider: %w", err)
 	}
 
 	state := func() string {
@@ -113,12 +112,7 @@ func (g *GoogleOp) RequestTokens(cicHash string) ([]byte, error) {
 	}
 }
 
-func (g *GoogleOp) VerifyPKToken(pktJSON []byte, cosPk *ecdsa.PublicKey) (map[string]any, error) {
-	pkt, err := pktoken.FromJSON(pktJSON)
-	if err != nil {
-		return nil, fmt.Errorf("error parsing PK Token: %w", err)
-	}
-
+func (g *GoogleOp) VerifyPKToken(pkt *pktoken.PKToken, cosPk crypto.PublicKey) (map[string]any, error) {
 	cicphJSON, err := util.Base64DecodeForJWT(pkt.CicPH)
 	if err != nil {
 		return nil, err
@@ -134,16 +128,15 @@ func (g *GoogleOp) VerifyPKToken(pktJSON []byte, cosPk *ecdsa.PublicKey) (map[st
 			return nil, fmt.Errorf("failed to get OP public key: %w", err)
 		}
 		sv := gq.NewSignerVerifier(pubKey.(*rsa.PublicKey), gqSecurityParameter)
-		signingPayload, signature, err := util.SplitJWT(idt)
-		if err != nil {
-			return nil, fmt.Errorf("failed to split/decode JWT: %w", err)
-		}
-		ok := sv.Verify(signature, signingPayload, signingPayload)
+		ok := sv.VerifyJWT(idt)
 		if !ok {
-			return nil, fmt.Errorf("error verifying OP GQ signature on PK Token (ID Token invalid): %w", err)
+			return nil, fmt.Errorf("error verifying OP GQ signature on PK Token (ID Token invalid)")
 		}
 
-		payloadB64 := bytes.Split(signingPayload, []byte{'.'})[1]
+		_, payloadB64, _, err := jws.SplitCompact(idt)
+		if err != nil {
+			return nil, err
+		}
 		payloadJSON, err := util.Base64DecodeForJWT(payloadB64)
 		if err != nil {
 			return nil, fmt.Errorf("failed to decode header: %w", err)
@@ -191,8 +184,6 @@ func (g *GoogleOp) VerifyPKToken(pktJSON []byte, cosPk *ecdsa.PublicKey) (map[st
 			return nil, fmt.Errorf("error verify cosigner signature on PK Token: %w", err)
 		}
 	}
-
-	fmt.Println("All tests have passed PK Token is valid")
 
 	cicPH := make(map[string]any)
 	err = json.Unmarshal(cicphJSON, &cicPH)
